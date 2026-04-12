@@ -27,25 +27,6 @@ def get_market():
     return ak.stock_zh_a_spot_em()
 
 # =========================
-# 情绪周期
-# =========================
-def market_phase(limit_up, limit_down, max_lb):
-
-    if limit_down > 50:
-        return "❄️退潮"
-
-    if max_lb >= 5 and limit_up > 80:
-        return "🔥高潮"
-
-    if max_lb >= 3 and limit_up > 40:
-        return "🚀主升"
-
-    if limit_up > 20:
-        return "🟡启动"
-
-    return "⚪冰点"
-
-# =========================
 # 涨跌停统计
 # =========================
 def calc_limit(df):
@@ -70,14 +51,76 @@ def get_max_board(pool):
                     break
 
             max_lb = max(max_lb, lb)
-
         except:
             continue
 
     return max_lb
 
 # =========================
-# 个股评分（强者排序核心🔥）
+# 情绪周期
+# =========================
+def market_phase(limit_up, limit_down, max_lb):
+
+    if limit_down > 50:
+        return "❄️退潮"
+
+    if max_lb >= 5 and limit_up > 80:
+        return "🔥高潮"
+
+    if max_lb >= 3 and limit_up > 40:
+        return "🚀主升"
+
+    if limit_up > 20:
+        return "🟡启动"
+
+    return "⚪冰点"
+
+# =========================
+# 仓位控制
+# =========================
+def position(phase):
+
+    if phase == "🚀主升":
+        return 0.25
+    if phase == "🟡启动":
+        return 0.15
+    if phase == "🔥高潮":
+        return 0.10
+    return 0.0
+
+# =========================
+# ===== 系统1：主升启动扫描 =====
+# =========================
+def detect_start(df):
+
+    if len(df) < 60:
+        return False
+
+    df = df.tail(60)
+
+    df["ma5"] = df["收盘"].rolling(5).mean()
+
+    latest = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    # 刚站上均线
+    cond1 = latest["收盘"] > latest["ma5"] and prev["收盘"] < prev["ma5"]
+
+    # 放量
+    vol_ma = df["成交量"].rolling(5).mean().iloc[-1]
+    cond2 = latest["成交量"] > vol_ma
+
+    # 小涨（避免已暴涨）
+    pct = df["收盘"].pct_change().iloc[-1]
+    cond3 = 0 < pct < 0.05
+
+    # 接近突破
+    cond4 = latest["收盘"] >= df["收盘"].rolling(20).max().iloc[-1] * 0.98
+
+    return cond1 and cond2 and cond3 and cond4
+
+# =========================
+# ===== 系统2：强者排序 =====
 # =========================
 def score_stock(df):
 
@@ -94,47 +137,31 @@ def score_stock(df):
 
     score = 0
 
-    # ===== 趋势 =====
+    # 趋势
     if latest["ma5"] > latest["ma10"] > latest["ma20"]:
         score += 35
 
-    # ===== 动量 =====
+    # 动量
     if df["收盘"].pct_change().iloc[-1] > 0.02:
         score += 15
 
-    # ===== 放量 =====
+    # 放量
     vol_ma = df["成交量"].rolling(5).mean().iloc[-1]
     if latest["成交量"] > vol_ma:
         score += 10
 
-    # ===== 突破 =====
+    # 突破
     if latest["收盘"] >= df["收盘"].rolling(20).max().iloc[-1]:
         score += 20
 
-    # ===== 加速 =====
+    # 加速
     if df["收盘"].pct_change().iloc[-1] > 0.05:
         score += 10
 
     return score
 
 # =========================
-# 仓位控制
-# =========================
-def position(phase):
-
-    if phase == "🚀主升":
-        return 0.25
-
-    if phase == "🟡启动":
-        return 0.15
-
-    if phase == "🔥高潮":
-        return 0.10
-
-    return 0.0
-
-# =========================
-# 龙头分级（核心🔥）
+# 龙头分级
 # =========================
 def rank_levels(results):
 
@@ -147,9 +174,7 @@ def rank_levels(results):
     top_a = np.percentile(scores, 85)
     top_b = np.percentile(scores, 70)
 
-    S = []
-    A = []
-    B = []
+    S, A, B = [], [], []
 
     for s, sc in results:
         if sc >= top_s:
@@ -166,12 +191,13 @@ def rank_levels(results):
 # =========================
 def main():
 
-    msg = "📊 分层选股 + 龙头分级系统\n\n"
+    msg = "📊 双系统：启动 + 龙头\n\n"
 
-    df = get_market()
-    pool = df[df["代码"].apply(is_main)]
+    market = get_market()
+    pool_df = market[market["代码"].apply(is_main)]
+    pool = pool_df["代码"].tolist()
 
-    limit_up, limit_down = calc_limit(df)
+    limit_up, limit_down = calc_limit(market)
     max_lb = get_max_board(pool)
 
     phase = market_phase(limit_up, limit_down, max_lb)
@@ -179,53 +205,70 @@ def main():
 
     msg += f"""
 📊 情绪周期：{phase}
-涨停：{limit_up}
-跌停：{limit_down}
+涨停：{limit_up} | 跌停：{limit_down}
 最高连板：{max_lb}
 
 💰 建议仓位：{int(pos*100)}%
 """
 
     # =========================
-    # 强者排序（关键🔥）
+    # 系统1：启动扫描
+    # =========================
+    start_list = []
+
+    for s in pool:
+        try:
+            df_s = ak.stock_zh_a_hist(symbol=s, period="daily", adjust="qfq")
+
+            if detect_start(df_s):
+                start_list.append(s)
+
+        except:
+            continue
+
+    # =========================
+    # 系统2：强者排序
     # =========================
     results = []
 
-    for s in pool["代码"].tolist():
+    for s in pool:
         try:
             df_s = ak.stock_zh_a_hist(symbol=s, period="daily", adjust="qfq")
 
             score = score_stock(df_s)
-
             results.append((s, score))
 
         except:
             continue
 
-    # 排序
     results = sorted(results, key=lambda x: x[1], reverse=True)
 
-    # =========================
-    # 龙头分级（S/A/B）
-    # =========================
+    # 分级
     S, A, B = rank_levels(results)
 
     # =========================
     # 输出
     # =========================
-    msg += "\n🔥【S级龙头（最强）】\n"
+    msg += "\n🚀【主升启动候选】\n"
+    if len(start_list) == 0:
+        msg += "（暂无明显启动）\n"
+    else:
+        for s in start_list[:5]:
+            msg += f"{s}\n"
+
+    msg += "\n🔥【S级龙头】\n"
     for s, sc in S[:3]:
-        msg += f"{s} | {sc}分\n"
+        msg += f"{s} | {sc}\n"
 
-    msg += "\n📊【A级强势股】\n"
+    msg += "\n📊【A级强势】\n"
     for s, sc in A[:5]:
-        msg += f"{s} | {sc}分\n"
+        msg += f"{s} | {sc}\n"
 
-    msg += "\n📈【B级观察股】\n"
+    msg += "\n📈【B级观察】\n"
     for s, sc in B[:5]:
-        msg += f"{s} | {sc}分\n"
+        msg += f"{s} | {sc}\n"
 
-    msg += "\n📉 风控：只做强者，弱势不参与\n"
+    msg += "\n📉 风控：启动做试仓，龙头做主仓，退潮空仓\n"
 
     send_telegram(msg)
     print(msg)
