@@ -70,32 +70,14 @@ def get_max_board(pool):
                     break
 
             max_lb = max(max_lb, lb)
+
         except:
             continue
 
     return max_lb
 
 # =========================
-# 自动调参（核心🔥）
-# =========================
-def get_dynamic_params(phase):
-
-    if phase == "🚀主升":
-        return {"score_min": 65, "top_n": 5}
-
-    if phase == "🟡启动":
-        return {"score_min": 50, "top_n": 8}
-
-    if phase == "🔥高潮":
-        return {"score_min": 70, "top_n": 3}
-
-    if phase == "❄️退潮":
-        return {"score_min": 80, "top_n": 3}
-
-    return {"score_min": 45, "top_n": 10}
-
-# =========================
-# 个股评分（核心）
+# 个股评分（强者排序核心🔥）
 # =========================
 def score_stock(df):
 
@@ -136,28 +118,64 @@ def score_stock(df):
     return score
 
 # =========================
-# 龙头池
+# 仓位控制
 # =========================
-def get_pool():
-    df = ak.stock_zh_a_spot_em()
-    df = df[df["代码"].apply(is_main)]
-    return df["代码"].tolist()
+def position(phase):
+
+    if phase == "🚀主升":
+        return 0.25
+
+    if phase == "🟡启动":
+        return 0.15
+
+    if phase == "🔥高潮":
+        return 0.10
+
+    return 0.0
+
+# =========================
+# 龙头分级（核心🔥）
+# =========================
+def rank_levels(results):
+
+    if len(results) == 0:
+        return [], [], []
+
+    scores = [x[1] for x in results]
+
+    top_s = np.percentile(scores, 95)
+    top_a = np.percentile(scores, 85)
+    top_b = np.percentile(scores, 70)
+
+    S = []
+    A = []
+    B = []
+
+    for s, sc in results:
+        if sc >= top_s:
+            S.append((s, sc))
+        elif sc >= top_a:
+            A.append((s, sc))
+        elif sc >= top_b:
+            B.append((s, sc))
+
+    return S, A, B
 
 # =========================
 # 主逻辑
 # =========================
 def main():
 
-    msg = "📊 稳定输出 + 自动调参系统\n\n"
+    msg = "📊 分层选股 + 龙头分级系统\n\n"
 
-    market = get_market()
-    pool = get_pool()
+    df = get_market()
+    pool = df[df["代码"].apply(is_main)]
 
-    limit_up, limit_down = calc_limit(market)
+    limit_up, limit_down = calc_limit(df)
     max_lb = get_max_board(pool)
 
     phase = market_phase(limit_up, limit_down, max_lb)
-    params = get_dynamic_params(phase)
+    pos = position(phase)
 
     msg += f"""
 📊 情绪周期：{phase}
@@ -165,49 +183,49 @@ def main():
 跌停：{limit_down}
 最高连板：{max_lb}
 
-🎯 自动参数：
-最低分：{params['score_min']}
-输出数量：{params['top_n']}
+💰 建议仓位：{int(pos*100)}%
 """
 
     # =========================
-    # 评分系统（核心）
+    # 强者排序（关键🔥）
     # =========================
     results = []
 
-    for s in pool:
+    for s in pool["代码"].tolist():
         try:
             df_s = ak.stock_zh_a_hist(symbol=s, period="daily", adjust="qfq")
 
             score = score_stock(df_s)
 
-            if score >= params["score_min"]:
-                results.append((s, score))
+            results.append((s, score))
 
         except:
             continue
 
-    # =========================
     # 排序
-    # =========================
     results = sorted(results, key=lambda x: x[1], reverse=True)
 
     # =========================
-    # 兜底机制（关键🔥永不空）
+    # 龙头分级（S/A/B）
     # =========================
-    if len(results) == 0:
-        for s in pool[:5]:
-            results.append((s, 40))
+    S, A, B = rank_levels(results)
 
     # =========================
     # 输出
     # =========================
-    msg += "\n🔥【今日核心标的】\n"
-
-    for s, sc in results[:params["top_n"]]:
+    msg += "\n🔥【S级龙头（最强）】\n"
+    for s, sc in S[:3]:
         msg += f"{s} | {sc}分\n"
 
-    msg += "\n📉 风控：顺势而为，退潮减仓\n"
+    msg += "\n📊【A级强势股】\n"
+    for s, sc in A[:5]:
+        msg += f"{s} | {sc}分\n"
+
+    msg += "\n📈【B级观察股】\n"
+    for s, sc in B[:5]:
+        msg += f"{s} | {sc}分\n"
+
+    msg += "\n📉 风控：只做强者，弱势不参与\n"
 
     send_telegram(msg)
     print(msg)
