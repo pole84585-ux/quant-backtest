@@ -8,6 +8,23 @@ from backtest import backtest_signals
 stocks = ["600519", "600036", "601318", "000001", "000858", "300750"]
 
 def send_telegram(msg):
+    import os
+    import requests
+
+    token = os.environ.get("TG_TOKEN")
+    chat_id = os.environ.get("TG_CHAT_ID")
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+    res = requests.post(url, data={
+        "chat_id": chat_id,
+        "text": msg
+    })
+
+    print("====== TELEGRAM DEBUG ======")
+    print("TOKEN:", token)
+    print("CHAT_ID:", chat_id)
+    print("RESPONSE:", res.text)
     token = os.environ["TG_TOKEN"]
     chat_id = os.environ["TG_CHAT_ID"]
 
