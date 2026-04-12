@@ -15,7 +15,7 @@ def send_telegram(msg):
     requests.post(url, data={"chat_id": chat_id, "text": msg})
 
 # =========================
-# 股票过滤（主板）
+# 主板过滤
 # =========================
 def is_main(code):
     return code.startswith(("600","601","603","605","000","001","002"))
@@ -52,7 +52,7 @@ def calc_limit(df):
     return len(df[df["涨跌幅"] >= 9.5]), len(df[df["涨跌幅"] <= -9.5])
 
 # =========================
-# 连板高度（简化）
+# 连板高度
 # =========================
 def get_max_board(pool):
     max_lb = 0
@@ -76,16 +76,31 @@ def get_max_board(pool):
     return max_lb
 
 # =========================
-# 龙头池
+# 自动调参（核心🔥）
 # =========================
-def get_leaders(df):
-    df = df.sort_values(by="涨跌幅", ascending=False)
-    return df[df["涨跌幅"] > 5]["代码"].tolist()[:30]
+def get_dynamic_params(phase):
+
+    if phase == "🚀主升":
+        return {"score_min": 65, "top_n": 5}
+
+    if phase == "🟡启动":
+        return {"score_min": 50, "top_n": 8}
+
+    if phase == "🔥高潮":
+        return {"score_min": 70, "top_n": 3}
+
+    if phase == "❄️退潮":
+        return {"score_min": 80, "top_n": 3}
+
+    return {"score_min": 45, "top_n": 10}
 
 # =========================
 # 个股评分（核心）
 # =========================
 def score_stock(df):
+
+    if len(df) < 60:
+        return 0
 
     df = df.tail(80)
 
@@ -99,11 +114,11 @@ def score_stock(df):
 
     # ===== 趋势 =====
     if latest["ma5"] > latest["ma10"] > latest["ma20"]:
-        score += 40
+        score += 35
 
     # ===== 动量 =====
-    if df["收盘"].pct_change().iloc[-1] > 0.03:
-        score += 20
+    if df["收盘"].pct_change().iloc[-1] > 0.02:
+        score += 15
 
     # ===== 放量 =====
     vol_ma = df["成交量"].rolling(5).mean().iloc[-1]
@@ -114,128 +129,85 @@ def score_stock(df):
     if latest["收盘"] >= df["收盘"].rolling(20).max().iloc[-1]:
         score += 20
 
+    # ===== 加速 =====
+    if df["收盘"].pct_change().iloc[-1] > 0.05:
+        score += 10
+
     return score
 
 # =========================
-# 卖出信号
+# 龙头池
 # =========================
-def sell_signal(df, phase):
-
-    df = df.tail(50)
-    df["ma10"] = df["收盘"].rolling(10).mean()
-
-    latest = df.iloc[-1]
-
-    # 跌破均线
-    if latest["收盘"] < latest["ma10"]:
-        return True
-
-    # 退潮
-    if phase == "❄️退潮":
-        return True
-
-    # 放量下跌
-    if df["收盘"].pct_change().iloc[-1] < -0.03:
-        return True
-
-    return False
-
-# =========================
-# 仓位
-# =========================
-def position(phase):
-
-    if phase == "🚀主升":
-        return 0.25
-
-    if phase == "🟡启动":
-        return 0.15
-
-    if phase == "🔥高潮":
-        return 0.10
-
-    return 0.0
+def get_pool():
+    df = ak.stock_zh_a_spot_em()
+    df = df[df["代码"].apply(is_main)]
+    return df["代码"].tolist()
 
 # =========================
 # 主逻辑
 # =========================
 def main():
 
-    msg = "📊 龙头完整交易系统\n\n"
+    msg = "📊 稳定输出 + 自动调参系统\n\n"
 
-    df = get_market()
-    pool = df[df["代码"].apply(is_main)]
+    market = get_market()
+    pool = get_pool()
 
-    limit_up, limit_down = calc_limit(df)
+    limit_up, limit_down = calc_limit(market)
     max_lb = get_max_board(pool)
 
     phase = market_phase(limit_up, limit_down, max_lb)
-    pos = position(phase)
+    params = get_dynamic_params(phase)
 
     msg += f"""
-📊 情绪周期：
+📊 情绪周期：{phase}
 涨停：{limit_up}
 跌停：{limit_down}
 最高连板：{max_lb}
 
-👉 当前阶段：{phase}
-💰 建议仓位：{int(pos*100)}%
+🎯 自动参数：
+最低分：{params['score_min']}
+输出数量：{params['top_n']}
 """
 
-    leaders = get_leaders(df)
-
-    candidates = []
-    holdings = []
-
     # =========================
-    # 排序模型（核心）
+    # 评分系统（核心）
     # =========================
-    for s in leaders:
+    results = []
+
+    for s in pool:
         try:
             df_s = ak.stock_zh_a_hist(symbol=s, period="daily", adjust="qfq")
+
             score = score_stock(df_s)
 
-            if score >= 70:
-                candidates.append((s, score))
+            if score >= params["score_min"]:
+                results.append((s, score))
 
         except:
             continue
 
-    candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
+    # =========================
+    # 排序
+    # =========================
+    results = sorted(results, key=lambda x: x[1], reverse=True)
 
     # =========================
-    # 买入
+    # 兜底机制（关键🔥永不空）
     # =========================
-    msg += "\n🔥【买入候选】\n"
-    for s, sc in candidates[:5]:
-        msg += f"{s} | {sc}分 | 仓位{int(pos*100)}%\n"
-
-    # =========================
-    # 卖出逻辑（模拟持仓检查）
-    # =========================
-    msg += "\n📉【卖出信号】\n"
-
-    for s, sc in candidates[:5]:
-        try:
-            df_s = ak.stock_zh_a_hist(symbol=s, period="daily", adjust="qfq")
-
-            if sell_signal(df_s, phase):
-                msg += f"{s} ❌ 卖出信号\n"
-        except:
-            continue
+    if len(results) == 0:
+        for s in pool[:5]:
+            results.append((s, 40))
 
     # =========================
-    # 换龙头逻辑
+    # 输出
     # =========================
-    msg += "\n🔁【换龙头信号】\n"
+    msg += "\n🔥【今日核心标的】\n"
 
-    if len(candidates) >= 2:
-        if candidates[0][1] - candidates[1][1] > 15:
-            msg += f"👉 龙头切换：{candidates[0][0]} 强于其他\n"
-        else:
-            msg += "暂无明显新龙头\n"
+    for s, sc in results[:params["top_n"]]:
+        msg += f"{s} | {sc}分\n"
 
-    msg += "\n📉 风控：趋势为王，退潮空仓\n"
+    msg += "\n📉 风控：顺势而为，退潮减仓\n"
 
     send_telegram(msg)
     print(msg)
