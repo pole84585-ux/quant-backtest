@@ -21,4 +21,8 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run script
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: python main.py
+       
