@@ -4,38 +4,54 @@ import numpy as np
 import requests
 import os
 import time
-import random
-import json
 
 # =========================
-# Telegram
+# TG
 # =========================
 def send(msg):
     token = os.environ.get("TG_TOKEN")
     chat_id = os.environ.get("TG_CHAT_ID")
     url = f"https://api.telegram.org/bot{token}/sendMessage"
+    requests.post(url, data={"chat_id": chat_id, "text": msg})
+
+# =========================
+# 主板过滤
+# =========================
+def is_main(code):
+    return code.startswith(("600","601","603","605","000","001","002","003","004"))
+
+# =========================
+# 大盘过滤🔥
+# =========================
+def market_ok():
+    df = ak.stock_zh_index_daily(symbol="sh000001")
+    df["ma5"] = df["close"].rolling(5).mean()
+    df["ma20"] = df["close"].rolling(20).mean()
+    return df.iloc[-1]["ma5"] > df.iloc[-1]["ma20"]
+
+# =========================
+# 热点板块🔥
+# =========================
+def get_hot_sectors():
     try:
-        requests.post(url, data={"chat_id": chat_id, "text": msg}, timeout=10)
+        df = ak.stock_board_industry_name_em()
+        df = df.sort_values(by="涨跌幅", ascending=False)
+        return df.head(5)["板块名称"].tolist()
     except:
-        print("TG失败")
+        return []
 
 # =========================
-# 持仓文件（本地模拟账户）
+# 板块成分
 # =========================
-POSITION_FILE = "position.json"
-
-def load_position():
-    if os.path.exists(POSITION_FILE):
-        with open(POSITION_FILE, "r") as f:
-            return json.load(f)
-    return {}
-
-def save_position(pos):
-    with open(POSITION_FILE, "w") as f:
-        json.dump(pos, f)
+def get_sector_stocks(name):
+    try:
+        df = ak.stock_board_industry_cons_em(symbol=name)
+        return df["代码"].tolist()
+    except:
+        return []
 
 # =========================
-# 安全获取数据
+# 安全获取
 # =========================
 def safe_fetch(s):
     try:
@@ -47,114 +63,117 @@ def safe_fetch(s):
     return None
 
 # =========================
-# 评分
+# 起爆点🔥
+# =========================
+def detect_start(df):
+
+    df = df.tail(30)
+    df["ma5"] = df["收盘"].rolling(5).mean()
+    df["ma10"] = df["收盘"].rolling(10).mean()
+
+    latest = df.iloc[-1]
+    prev = df.iloc[-2]
+
+    cond1 = prev["ma5"] < prev["ma10"] and latest["ma5"] > latest["ma10"]
+    cond2 = latest["收盘"] > prev["收盘"]
+    cond3 = latest["成交量"] > df["成交量"].rolling(5).mean().iloc[-1]
+
+    return cond1 and cond2 and cond3
+
+# =========================
+# 强度评分🔥
 # =========================
 def score(df):
+
     df = df.tail(60)
+
     ma5 = df["收盘"].rolling(5).mean().iloc[-1]
     ma10 = df["收盘"].rolling(10).mean().iloc[-1]
     ma20 = df["收盘"].rolling(20).mean().iloc[-1]
+
+    price = df["收盘"].iloc[-1]
     pct = df["收盘"].pct_change().iloc[-1]
 
-    sc = 0
-    if ma5 > ma10: sc += 20
-    if ma10 > ma20: sc += 20
-    if pct > 0: sc += 20
-    if pct > 0.03: sc += 20
-    return sc
+    s = 0
+    if ma5 > ma10 > ma20: s += 40
+    if pct > 0: s += 20
+    if pct > 0.03: s += 20
+    if price > df["收盘"].max()*0.9: s += 20
+
+    return s
 
 # =========================
-# 主逻辑
+# 主程序🔥
 # =========================
 def main():
 
-    msg = "📊 交易执行系统\n\n"
+    msg = "📊 起爆点 + 龙头系统\n\n"
 
-    market = ak.stock_zh_a_spot_em()
-    pool = market["代码"].tolist()
+    # ===== 大盘 =====
+    if not market_ok():
+        msg += "❄️ 市场弱 → 今日不做\n"
+        send(msg)
+        print(msg)
+        return
 
-    pool = random.sample(pool, 100)
+    msg += "🚀 市场允许交易\n\n"
 
-    results = []
+    # ===== 热点板块 =====
+    sectors = get_hot_sectors()
 
-    for s in pool:
-        df = safe_fetch(s)
-        if df is None:
-            continue
-
-        sc = score(df)
-        results.append((s, sc, df))
-
-        time.sleep(0.1)
-
-    results = sorted(results, key=lambda x: x[1], reverse=True)
-
-    top = results[:3]
-
-    # =========================
-    # 持仓读取
-    # =========================
-    pos = load_position()
-
-    msg += "🔥【今日龙头】\n"
-    for s, sc, _ in top:
-        msg += f"{s} | {sc}\n"
-
-    # =========================
-    # 买入逻辑
-    # =========================
-    for s, sc, df in top:
-
-        price = df["收盘"].iloc[-1]
-
-        if s not in pos:
-            pos[s] = {"buy_price": price}
-            msg += f"\n🟢 买入：{s} @ {price}"
-
-    # =========================
-    # 卖出逻辑
-    # =========================
-    for s in list(pos.keys()):
-
-        df = safe_fetch(s)
-        if df is None:
-            continue
-
-        price = df["收盘"].iloc[-1]
-        buy = pos[s]["buy_price"]
-
-        ret = (price - buy) / buy
-
-        ma5 = df["收盘"].rolling(5).mean().iloc[-1]
-
-        # 止损
-        if ret < -0.05:
-            msg += f"\n🔴 止损卖出：{s} {ret:.2%}"
-            del pos[s]
-            continue
-
-        # 止盈
-        if ret > 0.10:
-            msg += f"\n💰 止盈卖出：{s} {ret:.2%}"
-            del pos[s]
-            continue
-
-        # 跌破均线
-        if price < ma5:
-            msg += f"\n⚠️ 走弱卖出：{s}"
-            del pos[s]
-            continue
-
-        # 不在龙头 → 换股
-        if s not in [x[0] for x in top]:
-            msg += f"\n🔁 换股卖出：{s}"
-            del pos[s]
-
-    save_position(pos)
-
-    msg += "\n\n📦 当前持仓：\n"
-    for s in pos:
+    msg += "🔥 热点板块：\n"
+    for s in sectors:
         msg += f"{s}\n"
+
+    final = []
+
+    # ===== 板块循环 =====
+    for sec in sectors:
+
+        stocks = get_sector_stocks(sec)
+
+        temp = []
+
+        for s in stocks[:20]:  # 限流
+
+            if not is_main(s):
+                continue
+
+            df = safe_fetch(s)
+            if df is None:
+                continue
+
+            sc = score(df)
+
+            # 👉 龙头候选（先强度）
+            temp.append((s, sc, df))
+
+            time.sleep(0.1)
+
+        # ===== 选龙头 =====
+        temp = sorted(temp, key=lambda x: x[1], reverse=True)
+
+        leaders = temp[:3]
+
+        # ===== 龙头中找启动 =====
+        for s, sc, df in leaders:
+            if detect_start(df):
+                final.append((sec, s, sc))
+
+    # ===== 输出 =====
+    msg += "\n🚀【主升起爆龙头】\n"
+
+    if len(final) == 0:
+        msg += "（暂无符合条件）\n"
+    else:
+        for sec, s, sc in final[:5]:
+            msg += f"{sec}：{s} | {sc}\n"
+
+    msg += """
+\n📌 买点：14:30 或 次日开盘
+📉 止损：-5%
+💰 止盈：+10%
+"""
 
     send(msg)
     print(msg)
