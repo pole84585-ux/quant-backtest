@@ -1,182 +1,128 @@
 import akshare as ak
 import pandas as pd
-import numpy as np
 import requests
 import os
 import time
+import matplotlib.pyplot as plt
 
-# =========================
-# TG
-# =========================
-def send(msg):
-    token = os.environ.get("TG_TOKEN")
-    chat_id = os.environ.get("TG_CHAT_ID")
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    requests.post(url, data={"chat_id": chat_id, "text": msg})
+BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
+CHAT_ID = os.getenv("TG_CHAT_ID")
 
-# =========================
-# 主板过滤
-# =========================
-def is_main(code):
-    return code.startswith(("600","601","603","605","000","001","002","003","004"))
+# ===== Telegram =====
+def send_msg(msg):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
 
-# =========================
-# 大盘过滤🔥
-# =========================
-def market_ok():
-    df = ak.stock_zh_index_daily(symbol="sh000001")
-    df["ma5"] = df["close"].rolling(5).mean()
-    df["ma20"] = df["close"].rolling(20).mean()
-    return df.iloc[-1]["ma5"] > df.iloc[-1]["ma20"]
+def send_img(path, caption=""):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    with open(path, "rb") as f:
+        requests.post(url, data={"chat_id": CHAT_ID, "caption": caption}, files={"photo": f})
 
-# =========================
-# 热点板块🔥
-# =========================
-def get_hot_sectors():
+# ===== 主板过滤 =====
+def is_main_board(code):
+    return code.startswith(("600","601","603","605","000","001","002"))
+
+# ===== 计算上证指数均线 =====
+index_df = ak.stock_zh_index_daily(symbol="sh000001")
+index_df["MA21"] = index_df["close"].rolling(21).mean()
+
+today_index = index_df.iloc[-1]
+market_bull = today_index["close"] >= today_index["MA21"]
+
+MA_LEN = 21 if market_bull else 34
+mode = "牛市(MA21)" if market_bull else "熊市(MA34)"
+
+# ===== 热点板块 =====
+sector_df = ak.stock_board_industry_name_em()
+hot_sectors = sector_df.sort_values("涨跌幅", ascending=False).head(10)["板块名称"].tolist()
+
+stocks = []
+
+for s in hot_sectors:
     try:
-        df = ak.stock_board_industry_name_em()
-        df = df.sort_values(by="涨跌幅", ascending=False)
-        return df.head(5)["板块名称"].tolist()
+        df = ak.stock_board_industry_cons_em(symbol=s)
+        stocks.extend(df[["代码","名称"]].values.tolist())
+        time.sleep(0.5)
     except:
-        return []
+        continue
 
-# =========================
-# 板块成分
-# =========================
-def get_sector_stocks(name):
+stocks = list(set(stocks))
+stock_df = pd.DataFrame(stocks, columns=["code","name"])
+
+# ===== 过滤 =====
+stock_df = stock_df[stock_df["code"].apply(is_main_board)]
+stock_df = stock_df[~stock_df["name"].str.contains("ST")]
+
+results = []
+
+# ===== 选股 =====
+for _, row in stock_df.iterrows():
+    code = row["code"]
+    name = row["name"]
+
     try:
-        df = ak.stock_board_industry_cons_em(symbol=name)
-        return df["代码"].tolist()
+        df = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
+
+        if df.shape[0] < 80:
+            continue
+
+        df["MA"] = df["收盘"].rolling(MA_LEN).mean()
+
+        today = df.iloc[-1]
+        y1 = df.iloc[-2]
+
+        cond_trend = (
+            today["收盘"] > today["MA"] and
+            y1["收盘"] > y1["MA"]
+        )
+
+        cond_pullback = (
+            y1["收盘"] <= y1["MA"] and
+            today["收盘"] > today["MA"]
+        )
+
+        cond_volume = today["成交量"] > y1["成交量"]
+
+        if (cond_trend or cond_pullback) and cond_volume:
+
+            strength = (today["收盘"] - today["MA"]) / today["MA"]
+            vol_ratio = today["成交量"] / y1["成交量"]
+            momentum = (today["收盘"] - df.iloc[-5]["收盘"]) / df.iloc[-5]["收盘"]
+
+            score = strength*50 + vol_ratio*30 + momentum*20
+
+            results.append((code, name, df, score))
+
+        time.sleep(0.2)
+
     except:
-        return []
+        continue
 
-# =========================
-# 安全获取
-# =========================
-def safe_fetch(s):
-    try:
-        df = ak.stock_zh_a_hist(symbol=s, period="daily", adjust="qfq")
-        if df is not None and len(df) > 30:
-            return df
-    except:
-        return None
-    return None
+# ===== 排序 =====
+results.sort(key=lambda x: x[3], reverse=True)
 
-# =========================
-# 起爆点🔥
-# =========================
-def detect_start(df):
-
-    df = df.tail(30)
-    df["ma5"] = df["收盘"].rolling(5).mean()
-    df["ma10"] = df["收盘"].rolling(10).mean()
-
-    latest = df.iloc[-1]
-    prev = df.iloc[-2]
-
-    cond1 = prev["ma5"] < prev["ma10"] and latest["ma5"] > latest["ma10"]
-    cond2 = latest["收盘"] > prev["收盘"]
-    cond3 = latest["成交量"] > df["成交量"].rolling(5).mean().iloc[-1]
-
-    return cond1 and cond2 and cond3
-
-# =========================
-# 强度评分🔥
-# =========================
-def score(df):
-
+# ===== 画图 =====
+def plot(df, code, name):
     df = df.tail(60)
 
-    ma5 = df["收盘"].rolling(5).mean().iloc[-1]
-    ma10 = df["收盘"].rolling(10).mean().iloc[-1]
-    ma20 = df["收盘"].rolling(20).mean().iloc[-1]
+    plt.figure(figsize=(10,5))
+    plt.plot(df["收盘"], label="Close")
+    plt.plot(df["MA"], label=f"MA{MA_LEN}")
+    plt.title(f"{name} {code}")
+    plt.legend()
 
-    price = df["收盘"].iloc[-1]
-    pct = df["收盘"].pct_change().iloc[-1]
+    path = f"/tmp/{code}.png"
+    plt.savefig(path)
+    plt.close()
+    return path
 
-    s = 0
-    if ma5 > ma10 > ma20: s += 40
-    if pct > 0: s += 20
-    if pct > 0.03: s += 20
-    if price > df["收盘"].max()*0.9: s += 20
+# ===== 输出 =====
+if not results:
+    send_msg(f"😴 今日无信号 | 模式: {mode}")
+else:
+    send_msg(f"🔥 信号股票 Top {min(10,len(results))} | {mode}")
 
-    return s
-
-# =========================
-# 主程序🔥
-# =========================
-def main():
-
-    msg = "📊 起爆点 + 龙头系统\n\n"
-
-    # ===== 大盘 =====
-    if not market_ok():
-        msg += "❄️ 市场弱 → 今日不做\n"
-        send(msg)
-        print(msg)
-        return
-
-    msg += "🚀 市场允许交易\n\n"
-
-    # ===== 热点板块 =====
-    sectors = get_hot_sectors()
-
-    msg += "🔥 热点板块：\n"
-    for s in sectors:
-        msg += f"{s}\n"
-
-    final = []
-
-    # ===== 板块循环 =====
-    for sec in sectors:
-
-        stocks = get_sector_stocks(sec)
-
-        temp = []
-
-        for s in stocks[:20]:  # 限流
-
-            if not is_main(s):
-                continue
-
-            df = safe_fetch(s)
-            if df is None:
-                continue
-
-            sc = score(df)
-
-            # 👉 龙头候选（先强度）
-            temp.append((s, sc, df))
-
-            time.sleep(0.1)
-
-        # ===== 选龙头 =====
-        temp = sorted(temp, key=lambda x: x[1], reverse=True)
-
-        leaders = temp[:3]
-
-        # ===== 龙头中找启动 =====
-        for s, sc, df in leaders:
-            if detect_start(df):
-                final.append((sec, s, sc))
-
-    # ===== 输出 =====
-    msg += "\n🚀【主升起爆龙头】\n"
-
-    if len(final) == 0:
-        msg += "（暂无符合条件）\n"
-    else:
-        for sec, s, sc in final[:5]:
-            msg += f"{sec}：{s} | {sc}\n"
-
-    msg += """
-\n📌 买点：14:30 或 次日开盘
-📉 止损：-5%
-💰 止盈：+10%
-"""
-
-    send(msg)
-    print(msg)
-
-if __name__ == "__main__":
-    main()
+    for i, (code, name, df, score) in enumerate(results[:10], 1):
+        img = plot(df, code, name)
+        caption = f"#{i} {name} ({code})\nScore:{round(score,2)}\n{mode}"
+        send_img(img, caption)
