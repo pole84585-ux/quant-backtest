@@ -1,28 +1,25 @@
-name: Quant Backtest
+name: Dynamic MA21 MA34 Bot
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: "30 6 * * 1-5"
+    - cron: "0 8 * * 1-5"   # 北京16:00
+  workflow_dispatch:
 
 jobs:
   run:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v4
         with:
-          python-version: "3.11"
+          python-version: 3.10
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt
 
-      - name: Run script
+      - name: Run Bot
         env:
-          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: python main.py
-       
