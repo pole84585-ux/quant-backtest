@@ -8,13 +8,13 @@ def run():
     mode, data = select()
 
     if not data:
-        send_msg(f"📭 {now}\n模式:{mode}\n无机会")
+        send_msg(f"📭 {now}\n市场模式: {mode}\n无合适交易机会")
         return
 
-    msg = f"📊 {now} 牛熊 v2.0系统\n市场:{mode}\n\n"
+    msg = f"📊 {now} 牛熊市 v2.0\n市场模式: {mode}\n\n"
 
-    for c, m, state, s in data[:10]:
-        msg += f"{c} | {state} | 评分:{s}\n"
+    for code, m, state, s in data[:10]:
+        msg += f"{code} | {state} | 评分:{s}\n"
 
     send_msg(msg)
 
