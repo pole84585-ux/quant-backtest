@@ -1,2 +1,4 @@
-TG_TOKEN = "8777997270:AAGqH7Dg07WCKRxm9K9g_phK4j70c_leCXM"
-TG_CHAT_ID = "8305749702"
+import os
+
+TG_TOKEN = os.getenv("TG_TOKEN")
+TG_CHAT_ID = os.getenv("TG_CHAT_ID")
