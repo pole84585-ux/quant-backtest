@@ -2,165 +2,163 @@ import akshare as ak
 import pandas as pd
 import requests
 import os
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from datetime import datetime
 import time
 
-import matplotlib
-matplotlib.use('Agg')   # ✅ 关键：解决GitHub无图形界面
-import matplotlib.pyplot as plt
-
-
+# =====================
+# Telegram 配置
+# =====================
 BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
 CHAT_ID = os.getenv("TG_CHAT_ID")
 
 
-# ===== Telegram =====
-def send_msg(msg):
+def tg_send(text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.post(url, data={"chat_id": CHAT_ID, "text": text})
+
+
+def tg_img(path, caption=""):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    with open(path, "rb") as f:
+        requests.post(url, data={"chat_id": CHAT_ID, "caption": caption}, files={"photo": f})
+
+
+# =====================
+# 股票过滤（沪深主板）
+# =====================
+def is_main(code):
+    return code.startswith(("000","001","002","600","601","603","605"))
+
+
+def is_bad(name):
+    return "ST" in name
+
+
+# =====================
+# 牛熊判断（上证指数）
+# =====================
+def get_market_mode():
     try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
+        df = ak.stock_zh_index_daily(symbol="sh000001")
+        df["ma21"] = df["close"].rolling(21).mean()
+        last = df.iloc[-1]
+        return last["close"] >= last["ma21"], df
     except:
-        pass
+        return True, None
 
 
-def send_img(path, caption=""):
+is_bull, index_df = get_market_mode()
+MA = 21 if is_bull else 34
+mode = "牛市(MA21)" if is_bull else "熊市(MA34)"
+
+
+# =====================
+# 热点板块（兜底版本）
+# =====================
+def get_hot_sectors():
     try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-        with open(path, "rb") as f:
-            requests.post(url, data={"chat_id": CHAT_ID, "caption": caption}, files={"photo": f})
-    except:
-        pass
-
-
-# ===== 主板过滤 =====
-def is_main_board(code):
-    return code.startswith(("600","601","603","605","000","001","002"))
-
-
-# ===== 判断市场状态 =====
-try:
-    index_df = ak.stock_zh_index_daily(symbol="sh000001")
-
-    if index_df is None or index_df.empty:
-        raise Exception("index empty")
-
-    index_df["MA21"] = index_df["close"].rolling(21).mean()
-
-    idx_today = index_df.iloc[-1]
-
-    market_bull = idx_today["close"] >= idx_today["MA21"]
-
-except:
-    market_bull = True   # 出错默认当牛市处理
-
-
-MA_LEN = 21 if market_bull else 34
-mode = "牛市(MA21)" if market_bull else "熊市(MA34)"
-
-
-# ===== 热点板块 =====
-stocks = []
-
-try:
-    sector_df = ak.stock_board_industry_name_em()
-
-    if sector_df is not None and not sector_df.empty:
-        hot_sectors = sector_df.sort_values("涨跌幅", ascending=False).head(8)["板块名称"].tolist()
-    else:
-        hot_sectors = []
-
-except:
-    hot_sectors = []
-
-
-# ===== 获取板块股票 =====
-for sector in hot_sectors:
-    try:
-        df = ak.stock_board_industry_cons_em(symbol=sector)
+        df = ak.stock_board_industry_name_em()
 
         if df is None or df.empty:
+            raise Exception("empty")
+
+        if "涨跌幅" in df.columns:
+            return df.sort_values("涨跌幅", ascending=False).head(6)["板块名称"].tolist()
+
+        return df["板块名称"].head(6).tolist()
+
+    except:
+        return ["半导体", "人工智能", "新能源", "证券", "消费电子"]
+
+
+sectors = get_hot_sectors()
+
+
+# =====================
+# 获取股票池
+# =====================
+stocks = []
+
+for s in sectors:
+    try:
+        df = ak.stock_board_industry_cons_em(symbol=s)
+        if df is None or df.empty:
             continue
-
-        # ✅ 转 tuple（解决 set 报错）
-        stocks.extend([tuple(x) for x in df[["代码","名称"]].values])
-
-        time.sleep(0.5)
-
+        stocks += list(zip(df["代码"], df["名称"]))
+        time.sleep(0.3)
     except:
         continue
 
 
-# ===== 去重 =====
 stocks = list(set(stocks))
+df_stock = pd.DataFrame(stocks, columns=["code","name"])
 
-stock_df = pd.DataFrame(stocks, columns=["code","name"])
-
-
-# ===== 过滤 =====
-stock_df = stock_df[stock_df["code"].apply(is_main_board)]
-stock_df = stock_df[~stock_df["name"].str.contains("ST", na=False)]
+df_stock = df_stock[df_stock["code"].apply(is_main)]
+df_stock = df_stock[~df_stock["name"].apply(is_bad)]
 
 
+# =====================
+# 选股逻辑
+# =====================
 results = []
 
-
-# ===== 核心选股 =====
-for _, row in stock_df.iterrows():
+for _, row in df_stock.iterrows():
     code = row["code"]
     name = row["name"]
 
     try:
         df = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
 
-        if df is None or df.empty or df.shape[0] < 80:
+        if df is None or df.empty or len(df) < 60:
             continue
 
-        df["MA"] = df["收盘"].rolling(MA_LEN).mean()
+        df["ma"] = df["收盘"].rolling(MA).mean()
 
-        if df["MA"].isna().all():
+        if df["ma"].isna().all():
             continue
 
         today = df.iloc[-1]
         y1 = df.iloc[-2]
 
-        cond_trend = (
-            today["收盘"] > today["MA"] and
-            y1["收盘"] > y1["MA"]
-        )
+        # ===== 条件 =====
+        cond1 = (today["收盘"] > today["ma"] and y1["收盘"] > y1["ma"])
+        cond2 = (y1["收盘"] <= y1["ma"] and today["收盘"] > today["ma"])
+        cond3 = today["成交量"] > y1["成交量"]
 
-        cond_pullback = (
-            y1["收盘"] <= y1["MA"] and
-            today["收盘"] > today["MA"]
-        )
+        if (cond1 or cond2) and cond3:
 
-        cond_volume = today["成交量"] > y1["成交量"]
-
-        if (cond_trend or cond_pullback) and cond_volume:
-
-            strength = (today["收盘"] - today["MA"]) / today["MA"]
-            vol_ratio = today["成交量"] / y1["成交量"]
+            strength = (today["收盘"] - today["ma"]) / today["ma"]
+            vol = today["成交量"] / y1["成交量"]
             momentum = (today["收盘"] - df.iloc[-5]["收盘"]) / df.iloc[-5]["收盘"]
 
-            score = strength*50 + vol_ratio*30 + momentum*20
+            score = strength*50 + vol*30 + momentum*20
 
             results.append((code, name, df, score))
 
-        time.sleep(0.2)
+        time.sleep(0.15)
 
     except:
         continue
 
 
-# ===== 排序 =====
+# =====================
+# 排序
+# =====================
 results.sort(key=lambda x: x[3], reverse=True)
 
 
-# ===== 画图 =====
+# =====================
+# 画图
+# =====================
 def plot(df, code, name):
     df = df.tail(60)
 
     plt.figure(figsize=(10,5))
     plt.plot(df["收盘"], label="Close")
-    plt.plot(df["MA"], label=f"MA{MA_LEN}")
+    plt.plot(df["ma"], label=f"MA{MA}")
     plt.title(f"{name} {code}")
     plt.legend()
 
@@ -171,13 +169,14 @@ def plot(df, code, name):
     return path
 
 
-# ===== 输出 =====
-if not results:
-    send_msg(f"😴 今日无信号 | {mode}")
+# =====================
+# 输出
+# =====================
+if len(results) == 0:
+    tg_send(f"⚠️ 今日无信号 | {mode}")
 else:
-    send_msg(f"🔥 Top {min(10,len(results))} 机会股 | {mode}")
+    tg_send(f"🔥 A股选股信号 Top10 | {mode} | {datetime.now().strftime('%Y-%m-%d')}")
 
     for i, (code, name, df, score) in enumerate(results[:10], 1):
         img = plot(df, code, name)
-        caption = f"#{i} {name} ({code})\nScore:{round(score,2)}\n{mode}"
-        send_img(img, caption)
+        tg_img(img, f"{i}. {name} ({code})\nScore:{round(score,2)}")
