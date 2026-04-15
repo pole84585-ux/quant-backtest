@@ -1,11 +1,17 @@
 import akshare as ak
 import numpy as np
+import pandas as pd
 
-# ======================
-# 指数（牛熊判断增强）
-# ======================
+# =========================
+# 牛熊判断（指数趋势增强）
+# =========================
 def market_mode():
     df = ak.stock_zh_index_daily(symbol="sh000001")
+
+    if df is None or len(df) < 30:
+        return "BEAR"
+
+    df = df.copy()
     df["ma21"] = df["close"].rolling(21).mean()
 
     idx = df["close"].iloc[-1]
@@ -13,99 +19,125 @@ def market_mode():
 
     slope = df["close"].iloc[-1] - df["close"].iloc[-5]
 
-    if idx > ma and slope > 0:
+    if idx >= ma and slope > 0:
         return "BULL"
-    else:
-        return "BEAR"
+    return "BEAR"
 
-# ======================
-# 股票池
-# ======================
+# =========================
+# 股票池（主板+去ST）
+# =========================
 def get_pool():
     df = ak.stock_zh_a_spot_em()
 
-    df = df[~df["名称"].str.contains("ST")]
-    df = df[df["代码"].str.startswith(("600","601","603","000","001"))]
+    if df is None or len(df) == 0:
+        return pd.DataFrame()
+
+    df = df.copy()
+
+    df = df[~df["名称"].astype(str).str.contains("ST", na=False)]
+
+    df = df[df["代码"].astype(str).str.startswith(("600","601","603","000","001"))]
 
     return df
 
-# ======================
-# K线
-# ======================
+# =========================
+# K线数据
+# =========================
 def get_k(code):
     df = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
 
+    if df is None or len(df) < 30:
+        return None
+
     df = df.rename(columns={
-        "收盘":"close",
-        "开盘":"open",
-        "最高":"high",
-        "最低":"low",
-        "成交量":"volume"
+        "收盘": "close",
+        "开盘": "open",
+        "最高": "high",
+        "最低": "low",
+        "成交量": "volume"
     })
 
-    return df.dropna()
+    df = df.dropna()
 
-# ======================
-# 主线强度（市场资金）
-# ======================
-def money_strength(df):
-    return df["volume"].iloc[-1] / df["volume"].rolling(10).mean().iloc[-1]
+    return df
 
-# ======================
-# 龙头识别（升级版）
-# ======================
+# =========================
+# 成交量强度
+# =========================
+def volume_strength(df):
+    try:
+        return df["volume"].iloc[-1] / df["volume"].rolling(10).mean().iloc[-1]
+    except:
+        return 1
+
+# =========================
+# 龙头识别（v2.0）
+# =========================
 def is_leader(df):
-    if len(df) < 30:
+    try:
+        trend = df["close"].iloc[-1] > df["close"].rolling(20).mean().iloc[-1]
+        momentum = df["close"].iloc[-1] / df["close"].iloc[-5] - 1
+        vol = volume_strength(df)
+
+        return trend and momentum > 0.04 and vol > 1.2
+    except:
         return False
 
-    trend = df["close"].iloc[-1] > df["close"].rolling(20).mean().iloc[-1]
-    strength = (df["close"].iloc[-1] / df["close"].iloc[-5] - 1)
-    vol = money_strength(df)
-
-    return trend and strength > 0.04 and vol > 1.2
-
-# ======================
-# 低吸（优化）
-# ======================
+# =========================
+# 低吸点（回踩均线）
+# =========================
 def low_buy(df):
-    ma = df["close"].rolling(20).mean()
+    try:
+        ma20 = df["close"].rolling(20).mean().iloc[-1]
 
-    d = df.iloc[-1]
+        d = df.iloc[-1]
 
-    return d["low"] <= ma.iloc[-1] <= d["close"]
+        return d["low"] <= ma20 <= d["close"]
+    except:
+        return False
 
-# ======================
-# 熊市过滤增强
-# ======================
+# =========================
+# 熊市过滤
+# =========================
 def bear_filter(df):
-    return df["close"].iloc[-1] > df["close"].rolling(10).mean().iloc[-1]
+    try:
+        return df["close"].iloc[-1] > df["close"].rolling(10).mean().iloc[-1]
+    except:
+        return False
 
-# ======================
+# =========================
 # 评分系统（v2.0）
-# ======================
+# =========================
 def score(df):
     try:
-        vol = money_strength(df)
-        ret = df["close"].pct_change().iloc[-1]
-
+        vol = volume_strength(df)
         momentum = df["close"].iloc[-1] / df["close"].iloc[-5] - 1
+        ret = df["close"].pct_change().iloc[-1]
 
         return round(vol * 0.6 + momentum * 5 + ret * 10, 2)
     except:
         return 0
 
-# ======================
+# =========================
 # 主逻辑
-# ======================
+# =========================
 def select():
     mode = market_mode()
     pool = get_pool()
 
+    if pool is None or len(pool) == 0:
+        return mode, []
+
     res = []
 
-    for code in pool["代码"].tolist()[:80]:
+    codes = pool["代码"].tolist()[:80]
+
+    for code in codes:
         try:
             df = get_k(code)
+
+            if df is None:
+                continue
 
             if len(df) < 30:
                 continue
@@ -130,4 +162,6 @@ def select():
         except:
             continue
 
-    return mode, sorted(res, key=lambda x: x[3], reverse=True)
+    res = sorted(res, key=lambda x: x[3], reverse=True)
+
+    return mode, res
