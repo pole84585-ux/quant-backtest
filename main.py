@@ -41,7 +41,8 @@ stocks = []
 for s in hot_sectors:
     try:
         df = ak.stock_board_industry_cons_em(symbol=s)
-        stocks.extend(df[["代码","名称"]].values.tolist())
+        stocks.extend([tuple(x) for x in df[["代码","名称"]].values])
+ stocks = list(set(stocks))
         time.sleep(0.5)
     except:
         continue
