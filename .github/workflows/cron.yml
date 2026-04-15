@@ -1,9 +1,7 @@
-name: TG Health Check
+name: TG Test
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0/10 * * * *'   # 可改成每天16:00
 
 jobs:
   run:
