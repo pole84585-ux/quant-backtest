@@ -1,8 +1,8 @@
-name: A股选股系统
+name: A股稳定选股系统
 
 on:
   schedule:
-    - cron: "1 7 * * 1-5"   # 🇨🇳 北京时间 15:01
+    - cron: "1 7 * * 1-5"   # 北京时间15:01
   workflow_dispatch:
 
 jobs:
@@ -18,7 +18,7 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Run
+      - name: Run Strategy
         run: python main.py
         env:
           PUSH_KEY: ${{ secrets.PUSH_KEY }}
