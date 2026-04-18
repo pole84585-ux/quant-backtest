@@ -1,5 +1,6 @@
 import akshare as ak
 
+
 def get_stock_list():
     df = ak.stock_info_a_code_name()
 
@@ -19,6 +20,15 @@ def get_hist(code):
             "date","open","close","high","low",
             "volume","amount","_","_","_","_"
         ]
+        return df
+    except:
+        return None
+
+
+# ===== 行业数据（板块共振）=====
+def get_industry():
+    try:
+        df = ak.stock_board_industry_name_em()
         return df
     except:
         return None
