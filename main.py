@@ -5,30 +5,43 @@ from notifier import safe_send
 
 def run():
 
+    results = []
+
     try:
         stocks = get_stock_list()
     except Exception as e:
-        safe_send(f"数据获取失败: {e}")
-        return []
-
-    results = []
+        safe_send(f"❌ 获取股票列表失败: {e}")
+        return results
 
     for _, row in stocks.iterrows():
 
         try:
-            code = row["code"]
-            name = row["name"]
+            code = row.get("code")
+            name = row.get("name")
 
-            df = get_hist(code)
+            if not code:
+                continue
 
-            score = calc_score(df)
+            try:
+                df = get_hist(code)
+            except Exception as e:
+                print(f"获取K线失败 {code}: {e}")
+                continue
+
+            if df is None or df.empty:
+                continue
+
+            try:
+                score = calc_score(df)
+            except Exception as e:
+                print(f"计算失败 {code}: {e}")
+                continue
 
             if score >= 85:
                 results.append((code, name, score))
 
         except Exception as e:
-            # ⭐单股票失败不影响整体
-            print(f"跳过异常股票: {e}")
+            print(f"单股异常跳过: {e}")
             continue
 
     return sorted(results, key=lambda x: x[2], reverse=True)[:20]
@@ -49,5 +62,5 @@ if __name__ == "__main__":
         safe_send(msg)
 
     except Exception as e:
-        # ⭐最顶层兜底（永不崩）
-        print("系统异常但已捕获:", repr(e))
+        print("🔥 顶层异常已捕获:", repr(e))
+        safe_send(f"系统异常: {e}")
