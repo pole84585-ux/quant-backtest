@@ -1,71 +1,39 @@
 import requests
 import time
-from config import (
-    PUSH_KEY,
-    TG_TOKEN,
-    TG_CHAT_ID,
-    ENABLE_PUSHDEER,
-    ENABLE_TELEGRAM
-)
+from config import PUSH_KEY
 
 
-# ===== PushDeer =====
-def send_pushdeer(msg):
-
-    if not PUSH_KEY:
-        return False
-
-    try:
-        r = requests.post(
-            "https://api2.pushdeer.com/message/push",
-            data={
-                "pushkey": PUSH_KEY,
-                "text": msg
-            },
-            timeout=10
-        )
-        return r.status_code == 200
-    except:
-        return False
-
-
-# ===== Telegram =====
-def send_telegram(msg):
-
-    if not TG_TOKEN or not TG_CHAT_ID:
-        return False
-
-    url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-
-    try:
-        r = requests.post(
-            url,
-            data={
-                "chat_id": TG_CHAT_ID,
-                "text": msg
-            },
-            timeout=10
-        )
-        return r.status_code == 200
-    except:
-        return False
-
-
-# ===== 主入口（自动切换）=====
 def send(msg):
 
-    success = False
-
-    # 主通道 PushDeer
-    if ENABLE_PUSHDEER:
-        success = send_pushdeer(msg)
-
-    # 备通道 Telegram
-    if not success and ENABLE_TELEGRAM:
-        success = send_telegram(msg)
-
-    if success:
-        print("推送成功")
-    else:
-        print("推送失败")
+    if not PUSH_KEY:
+        print("未配置 PUSH_KEY")
         print(msg)
+        return
+
+    url = "https://api2.pushdeer.com/message/push"
+
+    data = {
+        "pushkey": PUSH_KEY,
+        "text": msg
+    }
+
+    for i in range(3):
+
+        try:
+            time.sleep(1)
+
+            r = requests.post(
+                url,
+                data=data,
+                timeout=10
+            )
+
+            if r.status_code == 200:
+                print("推送成功")
+                return
+
+        except Exception as e:
+            print(f"PushDeer失败{i+1}次:", repr(e))
+
+    print("最终推送失败：")
+    print(msg)
