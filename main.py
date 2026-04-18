@@ -1,39 +1,53 @@
 from data import get_stock_list, get_hist
 from strategy import calc_score
-from notifier import send
+from notifier import safe_send
 
 
 def run():
 
-    stocks = get_stock_list()
+    try:
+        stocks = get_stock_list()
+    except Exception as e:
+        safe_send(f"数据获取失败: {e}")
+        return []
+
     results = []
 
     for _, row in stocks.iterrows():
 
-        code = row["code"]
-        name = row["name"]
+        try:
+            code = row["code"]
+            name = row["name"]
 
-        df = get_hist(code)
+            df = get_hist(code)
 
-        score = calc_score(df)
+            score = calc_score(df)
 
-        if score >= 85:
-            results.append((code, name, score))
+            if score >= 85:
+                results.append((code, name, score))
 
-    results = sorted(results, key=lambda x: x[2], reverse=True)
+        except Exception as e:
+            # ⭐单股票失败不影响整体
+            print(f"跳过异常股票: {e}")
+            continue
 
-    return results[:20]
+    return sorted(results, key=lambda x: x[2], reverse=True)[:20]
 
 
 if __name__ == "__main__":
 
-    res = run()
+    try:
+        res = run()
 
-    if not res:
-        msg = "今日无龙头二波共振标的"
-    else:
-        msg = "🔥 龙头二波 + 板块共振：\n\n"
-        for code, name, score in res:
-            msg += f"{code} {name} | score:{score}\n"
+        if not res:
+            msg = "今日无龙头二波共振标的"
+        else:
+            msg = "🔥 龙头二波 + 板块共振：\n\n"
+            for code, name, score in res:
+                msg += f"{code} {name} | score:{score}\n"
 
-    send(msg)
+        safe_send(msg)
+
+    except Exception as e:
+        # ⭐最顶层兜底（永不崩）
+        print("系统异常但已捕获:", repr(e))
