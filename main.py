@@ -1,22 +1,51 @@
-from strategy import select
-from tg import send_msg
-from datetime import datetime
+from data import get_stock_list, get_hist
+from strategy import calc_score
+from notifier import send
+
+import akshare as ak
+
+
+def get_money(code):
+    try:
+        return ak.stock_individual_fund_flow(stock=code)
+    except:
+        return None
+
 
 def run():
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    stocks = get_stock_list()
+    results = []
 
-    mode, data = select()
+    for _, row in stocks.iterrows():
 
-    if not data:
-        send_msg(f"📭 {now}\n市场模式: {mode}\n无机会")
-        return
+        code = row["code"]
+        name = row["name"]
 
-    msg = f"📊 {now} BullBear Alpha v2.0\n模式: {mode}\n\n"
+        df = get_hist(code)
+        if df is None:
+            continue
 
-    for c, m, s in data[:10]:
-        msg += f"{c} | {m} | {s}\n"
+        money = get_money(code)
 
-    send_msg(msg)
+        score = calc_score(df, money)
+
+        if score >= 80:
+            results.append((code, name, score))
+
+    results = sorted(results, key=lambda x: x[2], reverse=True)
+
+    return results[:20]
+
 
 if __name__ == "__main__":
-    run()
+
+    res = run()
+
+    if not res:
+        msg = "今日无龙头二波标的"
+    else:
+        msg = "🔥 龙头二波候选：\n\n"
+        for code, name, score in res:
+            msg += f"{code} {name} | score:{score}\n"
+
+    send(msg)
