@@ -1,6 +1,12 @@
 import os
 
-BOT_TOKEN = os.getenv("BOT_TOKEN") or ""
-CHAT_ID = os.getenv("CHAT_ID") or ""
+# ===== PushDeer =====
+PUSH_KEY = os.getenv("PUSH_KEY") or ""
 
-MIN_SCORE = 85
+# ===== Telegram =====
+TG_TOKEN = os.getenv("TG_TOKEN") or ""
+TG_CHAT_ID = os.getenv("TG_CHAT_ID") or ""
+
+# ===== 开关 =====
+ENABLE_PUSHDEER = True
+ENABLE_TELEGRAM = True
