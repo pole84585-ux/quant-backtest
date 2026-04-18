@@ -1,78 +1,100 @@
 import pandas as pd
 
 
-def rsi(df, n=14):
-    delta = df["close"].diff()
-    gain = delta.clip(lower=0).rolling(n).mean()
-    loss = (-delta.clip(upper=0)).rolling(n).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
-
-
-def limit_up(df):
-    return (df["close"].pct_change() > 0.095).sum()
-
-
-# ===== 板块共振（简化稳定版）=====
-def industry_strength():
-    return 0.6  # 稳定默认值（避免数据源炸）
-
-
+# =========================
+# 主评分函数（Pro版）
+# =========================
 def calc_score(df):
 
-    if df is None or len(df) < 120:
+    if df is None or df.empty:
         return 0
 
-    df = df.copy()
-    df["rsi"] = rsi(df)
-
-    latest = df.iloc[-1]
     score = 0
 
-    # =========================
-    # ① 龙头条件
-    # =========================
-    if limit_up(df.tail(30)) < 2:
+    try:
+        close = df["收盘"]
+
+        # =========================
+        # ① 趋势强度（30分）
+        # =========================
+        if close.iloc[-1] > close.iloc[-5] > close.iloc[-10]:
+            score += 30
+
+        # 均线多头（简化版）
+        ma5 = close.rolling(5).mean()
+        ma10 = close.rolling(10).mean()
+
+        if ma5.iloc[-1] > ma10.iloc[-1]:
+            score += 10
+
+
+        # =========================
+        # ② 龙头二波结构（25分）
+        # =========================
+        high_20 = close.max()
+        pullback = close.iloc[-10:].min()
+
+        # 回踩不破前高80%
+        if pullback > high_20 * 0.75:
+            score += 15
+
+        # 近期重新走强
+        if close.iloc[-1] > close.iloc[-3]:
+            score += 10
+
+
+        # =========================
+        # ③ 量能（20分）
+        # =========================
+        vol = df["成交量"]
+
+        if vol.iloc[-1] > vol.rolling(5).mean().iloc[-1]:
+            score += 10
+
+        if vol.iloc[-1] > vol.iloc[-2]:
+            score += 10
+
+
+        # =========================
+        # ④ 波动健康度（10分）
+        # =========================
+        if close.std() / close.mean() < 0.15:
+            score += 10
+
+
+        # =========================
+        # ⑤ 防垃圾股（减分）
+        # =========================
+        if close.iloc[-1] < 5:
+            score -= 10
+
+        if close.pct_change().std() > 0.08:
+            score -= 10
+
+
+    except Exception as e:
+        print("评分异常:", e)
         return 0
-    score += 25
 
-    # =========================
-    # ② 二波结构
-    # =========================
-    high_30 = df["close"].rolling(30).max().iloc[-1]
-    drawdown = (high_30 - latest["close"]) / high_30
+    return max(score, 0)
 
-    if not (0.10 <= drawdown <= 0.30):
-        return 0
-    score += 20
 
-    prev_high = df["close"].iloc[-20:-5].max()
-    if latest["close"] > prev_high:
-        score += 25
-    else:
-        return 0
+# =========================
+# 排序筛选
+# =========================
+def select_top(stock_data):
 
-    # =========================
-    # ③ 量能
-    # =========================
-    vol_ma5 = df["volume"].rolling(5).mean().iloc[-1]
-    if latest["volume"] > vol_ma5 * 1.5:
-        score += 10
+    results = []
 
-    # =========================
-    # ④ 板块共振
-    # =========================
-    ind = industry_strength()
+    for code, name, df in stock_data:
 
-    if ind >= 0.7:
-        score += 15
-    elif ind >= 0.5:
-        score += 8
+        try:
+            score = calc_score(df)
 
-    # =========================
-    # ⑤ RSI
-    # =========================
-    if 50 <= latest["rsi"] <= 75:
-        score += 10
+            if score >= 70:   # 🔥入选阈值
+                results.append((code, name, score))
 
-    return score
+        except:
+            continue
+
+    return sorted(results, key=lambda x: x[2], reverse=True)[:20]
