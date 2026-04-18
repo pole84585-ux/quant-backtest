@@ -15,7 +15,7 @@ def run():
 
         df = get_hist(code)
 
-        score = calc_score(df, industry_strength=0.6)
+        score = calc_score(df)
 
         if score >= 85:
             results.append((code, name, score))
