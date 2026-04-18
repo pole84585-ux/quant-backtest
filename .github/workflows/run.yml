@@ -2,7 +2,7 @@ name: A股选股系统
 
 on:
   schedule:
-    - cron: "1 7 * * 1-5"   # 🇨🇳 北京时间15:01
+    - cron: "1 7 * * 1-5"   # 🇨🇳 北京时间 15:01
   workflow_dispatch:
 
 jobs:
@@ -22,5 +22,3 @@ jobs:
         run: python main.py
         env:
           PUSH_KEY: ${{ secrets.PUSH_KEY }}
-          TG_TOKEN: ${{ secrets.TG_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
