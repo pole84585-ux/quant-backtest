@@ -1,67 +1,90 @@
 import akshare as ak
 import pandas as pd
 import os
+from datetime import datetime
 
 
-CACHE_FILE = "stock_cache.csv"
+CACHE_FILE = "stock_pool_cache.csv"
 
 
-# ========================
-# 获取股票列表（稳定版）
-# ========================
+# =========================
+# 主函数：股票池获取（Pro）
+# =========================
 def get_stock_list():
 
-    # ===== ① 主接口 =====
+    df = None
+
+    # ========= ① 主接口 =========
     try:
-        print("尝试主接口...")
+        print("🔄 主接口获取股票列表...")
         df = ak.stock_info_a_code_name()
 
-        if df is not None and not df.empty:
-            df.columns = ["code", "name"]
-            print(f"主接口成功: {len(df)}")
-
-            save_cache(df)
-            return df
+        df.columns = ["code", "name"]
 
     except Exception as e:
-        print("主接口失败:", repr(e))
+        print("❌ 主接口失败:", repr(e))
 
 
-    # ===== ② 备用接口 =====
-    try:
-        print("尝试备用接口...")
-        df = ak.stock_zh_a_spot()
+    # ========= ② 备用接口 =========
+    if df is None or df.empty:
+        try:
+            print("🔄 备用接口...")
+            df = ak.stock_zh_a_spot()
 
-        if df is not None and not df.empty:
             df = df[["代码", "名称"]]
             df.columns = ["code", "name"]
 
-            print(f"备用接口成功: {len(df)}")
-
-            save_cache(df)
-            return df
-
-    except Exception as e:
-        print("备用接口失败:", repr(e))
+        except Exception as e:
+            print("❌ 备用接口失败:", repr(e))
 
 
-    # ===== ③ 本地缓存兜底 =====
-    if os.path.exists(CACHE_FILE):
-        print("使用本地缓存...")
-        df = pd.read_csv(CACHE_FILE)
+    # ========= ③ 缓存兜底 =========
+    if df is None or df.empty:
+        if os.path.exists(CACHE_FILE):
+            print("🧠 使用本地缓存股票池")
+            df = pd.read_csv(CACHE_FILE)
 
-        if not df.empty:
-            print(f"缓存加载成功: {len(df)}")
-            return df
 
-    # ===== 最终失败 =====
-    print("❌ 所有数据源失败")
+    # ========= ④ 过滤规则 =========
+    if df is not None and not df.empty:
+        df = clean_stock_pool(df)
+        save_cache(df)
+        print(f"✅ 股票池最终数量: {len(df)}")
+        return df
+
+
+    print("❌ 股票池完全失败")
     return pd.DataFrame(columns=["code", "name"])
 
 
-# ========================
-# 获取K线（带容错）
-# ========================
+# =========================
+# 股票过滤（核心Pro逻辑）
+# =========================
+def clean_stock_pool(df):
+
+    # 转字符串防止报错
+    df["code"] = df["code"].astype(str)
+
+    # ===== ① 剔除 ST =====
+    df = df[~df["name"].str.contains("ST")]
+
+    # ===== ② 只保留主板 =====
+    df = df[
+        df["code"].str.startswith("000") |
+        df["code"].str.startswith("001") |
+        df["code"].str.startswith("002") |
+        df["code"].str.startswith("600") |
+        df["code"].str.startswith("601") |
+        df["code"].str.startswith("603") |
+        df["code"].str.startswith("605")
+    ]
+
+    return df.reset_index(drop=True)
+
+
+# =========================
+# K线数据（稳定版）
+# =========================
 def get_hist(code):
 
     try:
@@ -73,17 +96,16 @@ def get_hist(code):
         return df
 
     except Exception as e:
-        print(f"K线失败 {code}:", e)
+        print(f"⚠️ K线失败 {code}:", repr(e))
         return None
 
 
-# ========================
-# 缓存保存
-# ========================
+# =========================
+# 缓存写入
+# =========================
 def save_cache(df):
 
     try:
         df.to_csv(CACHE_FILE, index=False)
-        print("缓存已更新")
     except Exception as e:
-        print("缓存保存失败:", e)
+        print("⚠️ 缓存写入失败:", repr(e))
