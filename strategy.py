@@ -13,7 +13,12 @@ def limit_up(df):
     return (df["close"].pct_change() > 0.095).sum()
 
 
-def calc_score(df, industry_strength=0):
+# ===== 板块共振（简化稳定版）=====
+def industry_strength():
+    return 0.6  # 稳定默认值（避免数据源炸）
+
+
+def calc_score(df):
 
     if df is None or len(df) < 120:
         return 0
@@ -24,16 +29,20 @@ def calc_score(df, industry_strength=0):
     latest = df.iloc[-1]
     score = 0
 
-    # ===== 龙头强度 =====
+    # =========================
+    # ① 龙头条件
+    # =========================
     if limit_up(df.tail(30)) < 2:
         return 0
     score += 25
 
-    # ===== 二波结构 =====
+    # =========================
+    # ② 二波结构
+    # =========================
     high_30 = df["close"].rolling(30).max().iloc[-1]
     drawdown = (high_30 - latest["close"]) / high_30
 
-    if not (0.1 <= drawdown <= 0.3):
+    if not (0.10 <= drawdown <= 0.30):
         return 0
     score += 20
 
@@ -43,18 +52,26 @@ def calc_score(df, industry_strength=0):
     else:
         return 0
 
-    # ===== 量能 =====
+    # =========================
+    # ③ 量能
+    # =========================
     vol_ma5 = df["volume"].rolling(5).mean().iloc[-1]
     if latest["volume"] > vol_ma5 * 1.5:
         score += 10
 
-    # ===== 板块共振 =====
-    if industry_strength >= 0.7:
+    # =========================
+    # ④ 板块共振
+    # =========================
+    ind = industry_strength()
+
+    if ind >= 0.7:
         score += 15
-    elif industry_strength >= 0.5:
+    elif ind >= 0.5:
         score += 8
 
-    # ===== RSI =====
+    # =========================
+    # ⑤ RSI
+    # =========================
     if 50 <= latest["rsi"] <= 75:
         score += 10
 
