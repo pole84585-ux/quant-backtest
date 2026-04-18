@@ -1,43 +1,33 @@
-name: A股量化选股系统（稳定版）
+name: A股选股系统
 
 on:
   schedule:
-    - cron: "1 7 * * 1-5"   # 🇨🇳 北京时间 15:01
+    - cron: "1 7 * * 1-5"   # 北京时间15:01
   workflow_dispatch:
 
 jobs:
   run:
     runs-on: ubuntu-latest
 
-    timeout-minutes: 30
-
     steps:
-      # ===== 拉代码 =====
       - name: Checkout
         uses: actions/checkout@v3
 
-      # ===== Python环境 =====
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
-      # ===== 安装依赖 =====
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ===== 运行策略（关键：永不崩）=====
-      - name: Run Strategy
+      - name: Run main
         run: |
-          echo "开始运行选股系统..."
+          echo "开始执行 main.py"
           python main.py || true
-          echo "运行结束（无论是否报错都继续）"
+          echo "执行结束"
 
         env:
           PUSH_KEY: ${{ secrets.PUSH_KEY }}
-
-      # ===== 结束提示 =====
-      - name: Done
-        run: echo "Workflow completed"
