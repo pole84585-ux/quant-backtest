@@ -1,167 +1,83 @@
-import akshare as ak
-import numpy as np
 import pandas as pd
 
-# =========================
-# 牛熊判断（指数趋势增强）
-# =========================
-def market_mode():
-    df = ak.stock_zh_index_daily(symbol="sh000001")
+def rsi(df, n=14):
+    delta = df["close"].diff()
+    gain = delta.clip(lower=0).rolling(n).mean()
+    loss = (-delta.clip(upper=0)).rolling(n).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
 
-    if df is None or len(df) < 30:
-        return "BEAR"
 
-    df = df.copy()
-    df["ma21"] = df["close"].rolling(21).mean()
+def count_limit_up(df):
+    pct = df["close"].pct_change()
+    return (pct > 0.095).sum()
 
-    idx = df["close"].iloc[-1]
-    ma = df["ma21"].iloc[-1]
 
-    slope = df["close"].iloc[-1] - df["close"].iloc[-5]
+def calc_score(df, money=None):
 
-    if idx >= ma and slope > 0:
-        return "BULL"
-    return "BEAR"
-
-# =========================
-# 股票池（主板+去ST）
-# =========================
-def get_pool():
-    df = ak.stock_zh_a_spot_em()
-
-    if df is None or len(df) == 0:
-        return pd.DataFrame()
-
-    df = df.copy()
-
-    df = df[~df["名称"].astype(str).str.contains("ST", na=False)]
-
-    df = df[df["代码"].astype(str).str.startswith(("600","601","603","000","001"))]
-
-    return df
-
-# =========================
-# K线数据
-# =========================
-def get_k(code):
-    df = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
-
-    if df is None or len(df) < 30:
-        return None
-
-    df = df.rename(columns={
-        "收盘": "close",
-        "开盘": "open",
-        "最高": "high",
-        "最低": "low",
-        "成交量": "volume"
-    })
-
-    df = df.dropna()
-
-    return df
-
-# =========================
-# 成交量强度
-# =========================
-def volume_strength(df):
-    try:
-        return df["volume"].iloc[-1] / df["volume"].rolling(10).mean().iloc[-1]
-    except:
-        return 1
-
-# =========================
-# 龙头识别（v2.0）
-# =========================
-def is_leader(df):
-    try:
-        trend = df["close"].iloc[-1] > df["close"].rolling(20).mean().iloc[-1]
-        momentum = df["close"].iloc[-1] / df["close"].iloc[-5] - 1
-        vol = volume_strength(df)
-
-        return trend and momentum > 0.04 and vol > 1.2
-    except:
-        return False
-
-# =========================
-# 低吸点（回踩均线）
-# =========================
-def low_buy(df):
-    try:
-        ma20 = df["close"].rolling(20).mean().iloc[-1]
-
-        d = df.iloc[-1]
-
-        return d["low"] <= ma20 <= d["close"]
-    except:
-        return False
-
-# =========================
-# 熊市过滤
-# =========================
-def bear_filter(df):
-    try:
-        return df["close"].iloc[-1] > df["close"].rolling(10).mean().iloc[-1]
-    except:
-        return False
-
-# =========================
-# 评分系统（v2.0）
-# =========================
-def score(df):
-    try:
-        vol = volume_strength(df)
-        momentum = df["close"].iloc[-1] / df["close"].iloc[-5] - 1
-        ret = df["close"].pct_change().iloc[-1]
-
-        return round(vol * 0.6 + momentum * 5 + ret * 10, 2)
-    except:
+    if df is None or len(df) < 120:
         return 0
 
-# =========================
-# 主逻辑
-# =========================
-def select():
-    mode = market_mode()
-    pool = get_pool()
+    df = df.copy()
 
-    if pool is None or len(pool) == 0:
-        return mode, []
+    df["ma5"] = df["close"].rolling(5).mean()
+    df["ma10"] = df["close"].rolling(10).mean()
+    df["ma20"] = df["close"].rolling(20).mean()
+    df["ma60"] = df["close"].rolling(60).mean()
+    df["rsi"] = rsi(df)
 
-    res = []
+    latest = df.iloc[-1]
 
-    codes = pool["代码"].tolist()[:80]
+    # ===== 基础过滤 =====
+    if latest["amount"] < 2e8:
+        return 0
 
-    for code in codes:
-        try:
-            df = get_k(code)
+    score = 0
 
-            if df is None:
-                continue
+    # ===== ① 龙头确认 =====
+    if count_limit_up(df.tail(30)) >= 2:
+        score += 25
+    else:
+        return 0
 
-            if len(df) < 30:
-                continue
+    # ===== ② 调整阶段 =====
+    high_30 = df["close"].rolling(30).max().iloc[-1]
+    drawdown = (high_30 - latest["close"]) / high_30
 
-            leader = is_leader(df)
-            low = low_buy(df)
-            s = score(df)
+    if 0.1 <= drawdown <= 0.3:
+        score += 15
+    else:
+        return 0
 
-            # 熊市过滤
-            if mode == "BEAR" and not bear_filter(df):
-                continue
+    vol_recent = df["volume"].tail(5).mean()
+    vol_old = df["volume"].iloc[-20:-10].mean()
 
-            if leader and low:
-                res.append((code, mode, "🔥龙头低吸", s))
+    if vol_recent < vol_old:
+        score += 10
 
-            elif leader:
-                res.append((code, mode, "🚀龙头", s))
+    # ===== ③ 二波启动 =====
+    prev_high = df["close"].iloc[-20:-5].max()
 
-            elif low:
-                res.append((code, mode, "🟡低吸", s))
+    if latest["close"] > prev_high:
+        score += 25
+    else:
+        return 0
 
-        except:
-            continue
+    vol_ma5 = df["volume"].rolling(5).mean().iloc[-1]
+    if latest["volume"] > vol_ma5 * 1.5:
+        score += 10
 
-    res = sorted(res, key=lambda x: x[3], reverse=True)
+    # ===== ④ 主力资金 =====
+    try:
+        if money is not None and len(money) >= 3:
+            net = money["主力净流入"].astype(float).tail(3)
+            if net.sum() > 0:
+                score += 15
+    except:
+        pass
 
-    return mode, res
+    # ===== ⑤ 强势区 =====
+    if 50 <= latest["rsi"] <= 75:
+        score += 10
+
+    return score
