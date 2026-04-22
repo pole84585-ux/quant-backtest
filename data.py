@@ -1,10 +1,8 @@
 import akshare as ak
 
-def get_data():
+def get_kline(code):
+    return ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
 
-    df = ak.stock_zh_a_spot_em()
 
-    # 只保留沪深主板
-    df = df[df['代码'].str.startswith(('60','00'))]
-
-    return df
+def get_sector(code):
+    return "科技"
