@@ -1,66 +1,45 @@
-from data import get_stock_list, get_hist
-from strategy import calc_score
-from notifier import safe_send
+import requests
+from data import get_data
+from cycle import detect_cycle
+from score import score
+from buy_point import buy_point
+from config import PUSHDEER_KEY
 
 
-def run():
+def push(msg):
 
-    results = []
+    url = "https://api2.pushdeer.com/message/push"
 
-    try:
-        stocks = get_stock_list()
-    except Exception as e:
-        safe_send(f"❌ 获取股票列表失败: {e}")
-        return results
+    requests.post(url, data={
+        "pushkey": PUSHDEER_KEY,
+        "text": msg
+    })
 
-    for _, row in stocks.iterrows():
 
-        try:
-            code = row.get("code")
-            name = row.get("name")
+def main():
 
-            if not code:
-                continue
+    df = get_data()
 
-            try:
-                df = get_hist(code)
-            except Exception as e:
-                print(f"获取K线失败 {code}: {e}")
-                continue
+    df = detect_cycle(df)
+    df = score(df)
 
-            if df is None or df.empty:
-                continue
+    top = df.head(5)
 
-            try:
-                score = calc_score(df)
-            except Exception as e:
-                print(f"计算失败 {code}: {e}")
-                continue
+    msg = "🚀 沪深主板主升浪系统\n\n"
 
-            if score >= 85:
-                results.append((code, name, score))
+    for _, row in top.iterrows():
 
-        except Exception as e:
-            print(f"单股异常跳过: {e}")
-            continue
+        signal = buy_point(row['stage'])
 
-    return sorted(results, key=lambda x: x[2], reverse=True)[:20]
+        msg += (
+            f"{row['代码']} {row['名称']}\n"
+            f"阶段：{row['stage']}\n"
+            f"信号：{signal}\n"
+            f"涨幅：{row['涨跌幅']}%\n\n"
+        )
+
+    push(msg)
 
 
 if __name__ == "__main__":
-
-    try:
-        res = run()
-
-        if not res:
-            msg = "今日无龙头二波共振标的"
-        else:
-            msg = "🔥 龙头二波 + 板块共振：\n\n"
-            for code, name, score in res:
-                msg += f"{code} {name} | score:{score}\n"
-
-        safe_send(msg)
-
-    except Exception as e:
-        print("🔥 顶层异常已捕获:", repr(e))
-        safe_send(f"系统异常: {e}")
+    main()
