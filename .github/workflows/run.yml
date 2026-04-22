@@ -1,8 +1,8 @@
-name: A股终极量化系统
+name: A股量化系统V5
 
 on:
   schedule:
-    - cron: "1 7 * * 1-5"
+    - cron: "1 7 * * 1-5"   # 北京时间 15:01（UTC+8）
   workflow_dispatch:
 
 jobs:
@@ -10,15 +10,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - name: 📥 Checkout code
+        uses: actions/checkout@v3
 
-      - name: Setup Python
+      - name: 🐍 Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
-      - name: Install
-        run: pip install -r requirements.txt
+      - name: 📦 Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Run
+      - name: 🚀 Run main program
         run: python main.py
+        env:
+          PUSHDEER_KEY: ${{ secrets.PUSHDEER_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
