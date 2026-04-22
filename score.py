@@ -1,18 +1,13 @@
-def score(df):
+def stock_score(df):
+    last = df.iloc[-1]
 
-    df = df.copy()
-    df['score'] = 0
+    score = 0
 
-    # 涨幅强度
-    df['score'] += df['涨跌幅'] * 3
+    if last["MA5"] > last["MA10"]:
+        score += 30
+    if last["MA10"] > last["MA20"]:
+        score += 30
+    if last["收盘"] > last["MA20"]:
+        score += 40
 
-    # 成交量
-    df['score'] += (df['成交量'] / df['成交量'].mean()) * 20
-
-    # 活跃度
-    df['score'] += (df['换手率'] < 20) * 10
-
-    # 强势加成
-    df['score'] += (df['涨跌幅'] > 3) * 10
-
-    return df.sort_values('score', ascending=False)
+    return score
