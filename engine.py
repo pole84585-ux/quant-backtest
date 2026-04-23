@@ -1,39 +1,24 @@
-from core.leader import is_leader, strength
-from core.lagger import is_lagger
-from portfolio.allocation import allocate
-from data.fetch import get_data
+from core.safe import safe_run
+from core.leader import is_leader
 
-def run(stock_list, sector):
+def run(stock_list):
 
     leaders = []
-    laggers = []
 
     for s in stock_list:
 
-        df = get_data(s["code"])
+        def process():
+            df = s["df"]
 
-        if df is None or len(df) < 30:
-            continue
+            if is_leader(df):
+                return {
+                    "code": s["code"],
+                    "name": s["name"]
+                }
 
-        sector_flag = True  # 简化：默认同板块（可扩展）
+        res = safe_run(process)
 
-        if is_leader(df):
+        if res:
+            leaders.append(res)
 
-            leaders.append({
-                "code": s["code"],
-                "name": s["name"],
-                "strength": strength(df)
-            })
-
-        elif is_lagger(df, sector_flag):
-
-            laggers.append({
-                "code": s["code"],
-                "name": s["name"]
-            })
-
-    leaders = sorted(leaders, key=lambda x: x["strength"], reverse=True)[:3]
-
-    portfolio = allocate(leaders, laggers)
-
-    return leaders, laggers, portfolio
+    return leaders
