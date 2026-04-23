@@ -1,57 +1,47 @@
+import os
 from universe import get_universe
 from data import get_kline
 from factors import add_indicators
 from score import stock_score
-from gpt_sentiment import get_news_sentiment
-from sector import get_sector_strength
-from portfolio import build_portfolio
+from sentiment import sentiment_score
 from push import push
 
 def run():
 
-    universe = get_universe()
-    hot_sectors = get_sector_strength()
+    print("🚀 开始运行系统...")
+
+    df_list = get_universe().head(200)  # 防止超时
 
     results = []
 
-    for _, row in universe.iterrows():
+    for _, row in df_list.iterrows():
         code = row["code"]
         name = row["name"]
 
-        df = get_kline(code)
-        if df is None or len(df) < 60:
-            continue
-
-        df = add_indicators(df)
-
         try:
-            base = stock_score(df)
-            senti = get_news_sentiment(code)
+            df = get_kline(code)
+            if df is None or len(df) < 60:
+                continue
 
-            final = base * 0.7 + senti * 30
+            df = add_indicators(df)
 
-            results.append({
-                "code": code,
-                "name": name,
-                "score": final
-            })
+            score = stock_score(df, code)
+            senti = sentiment_score(code)
 
-        except:
+            final = score * 0.7 + senti * 30
+
+            results.append((code, name, final))
+
+        except Exception as e:
+            print(f"❌ {code} 出错:", e)
             continue
 
-    results = sorted(results, key=lambda x: x["score"], reverse=True)[:10]
+    results = sorted(results, key=lambda x: x[2], reverse=True)[:10]
 
-    portfolio = build_portfolio(results)
-
-    msg = "📊 A股终极量化组合Top10\n\n"
+    msg = "📊 A股Top10\n\n"
 
     for r in results:
-        msg += f"{r['code']} {r['name']} ⭐{r['score']}\n"
-
-    msg += "\n📦 组合权重:\n"
-
-    for p in portfolio:
-        msg += f"{p['code']} 权重:{p['weight']}\n"
+        msg += f"{r[0]} {r[1]} ⭐{r[2]}\n"
 
     push(msg)
 
