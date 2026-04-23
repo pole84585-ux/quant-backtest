@@ -1,32 +1,22 @@
-from data.universe import get_universe
-from core.sector import get_sector
+from infra.push import push
 from engine import run
-from push import push
+from core.safe import safe_run
 
-def main():
+def main(stock_list):
 
-    stock_list = get_universe()
-    sector = get_sector()
+    leaders = safe_run(run, [], stock_list)
 
-    leaders, laggers, portfolio = run(stock_list, sector)
-
-    msg = "🏦 机构级市场结构系统\n\n"
-
-    msg += f"🔥 板块：{sector['leader_sector']} ({sector['leader_change']}%)\n\n"
+    msg = "🏦 V2.5 稳定系统\n\n"
 
     msg += "🏆 龙头：\n"
+
     for l in leaders:
-        msg += f"{l['code']} {l['name']} 强度:{round(l['strength'],2)}\n"
-
-    msg += "\n🚀 补涨：\n"
-    for l in laggers:
         msg += f"{l['code']} {l['name']}\n"
-
-    msg += "\n💼 仓位：\n"
-    for p in portfolio:
-        msg += f"{p['code']} : {p['weight']*100:.1f}%\n"
 
     push(msg)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main([])
+    except Exception as e:
+        print("[CRITICAL]", e)
