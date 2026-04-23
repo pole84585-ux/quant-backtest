@@ -1,0 +1,12 @@
+import os
+
+PUSHDEER_KEY = os.getenv("PUSHDEER_KEY")
+
+MAX_STOCKS = 150
+TOP_N = 5
+
+LOOKBACK = 60   # 回测窗口
+
+MAX_DRAWDOWN = 0.15
+MAX_POSITION = 0.3
+TOTAL_POSITION = 0.8
